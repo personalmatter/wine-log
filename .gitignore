@@ -4,6 +4,7 @@
 *.env
 credentials.json
 *.json
+!manifest.json
 
 # 캐시 및 컴파일 파일
 __pycache__/
