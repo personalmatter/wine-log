@@ -76,7 +76,6 @@ function initRatingStars(containerId, displayId, onRate, initialValue = 4.0) {
       }
 
       star.addEventListener("click", () => {
-        // 같은 별을 다시 누르면 .5 단위 토글 또는 다음 별
         let newScore = i;
         if (currentScore === i) {
           newScore = i - 0.5;
@@ -92,67 +91,76 @@ function initRatingStars(containerId, displayId, onRate, initialValue = 4.0) {
   renderStars(initialValue);
 }
 
-// 사진 업로드 및 AI 분석
+// 사진 업로드 (카메라 촬영 & 앨범 선택 공통 처리)
 function initFileUpload() {
-  const fileInput = document.getElementById("file-input");
+  const fileInputAlbum = document.getElementById("file-input-album");
+  const fileInputCamera = document.getElementById("file-input-camera");
+
+  const onFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) handleSelectedFile(file);
+    e.target.value = ""; // 동일 파일 다시 선택 가능하도록 리셋
+  };
+
+  if (fileInputAlbum) fileInputAlbum.addEventListener("change", onFileChange);
+  if (fileInputCamera) fileInputCamera.addEventListener("change", onFileChange);
+}
+
+// 선택된 사진 처리 및 AI 라벨 분석 요청
+async function handleSelectedFile(file) {
   const uploadPlaceholder = document.getElementById("upload-placeholder");
   const previewContainer = document.getElementById("image-preview-container");
   const imagePreview = document.getElementById("image-preview");
   const analyzingOverlay = document.getElementById("analyzing-overlay");
 
-  fileInput.addEventListener("change", async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  // 1. 즉시 로컬 미리보기 표시
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    imagePreview.src = event.target.result;
+    uploadPlaceholder.classList.add("hidden");
+    previewContainer.classList.remove("hidden");
+    analyzingOverlay.classList.remove("hidden");
+  };
+  reader.readAsDataURL(file);
 
-    // 1. 로컬 미리보기 표시
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      imagePreview.src = event.target.result;
-      uploadPlaceholder.classList.add("hidden");
-      previewContainer.classList.remove("hidden");
-      analyzingOverlay.classList.remove("hidden");
-    };
-    reader.readAsDataURL(file);
+  // 2. 백엔드로 사진 전송하여 라벨 분석 + 비비노 검색
+  const formData = new FormData();
+  formData.append("file", file);
 
-    // 2. 백엔드로 사진 전송하여 라벨 분석 + 비비노 검색
-    const formData = new FormData();
-    formData.append("file", file);
+  try {
+    const resp = await fetch("/api/analyze-label", {
+      method: "POST",
+      body: formData
+    });
 
-    try {
-      const resp = await fetch("/api/analyze-label", {
-        method: "POST",
-        body: formData
-      });
+    if (!resp.ok) throw new Error("분석 요청 실패");
+    const data = await resp.json();
 
-      if (!resp.ok) throw new Error("분석 요청 실패");
-      const data = await resp.json();
+    currentImageFilename = data.filename;
 
-      currentImageFilename = data.filename;
-
-      // 폼 필드 채우기
-      if (data.label) {
-        if (data.label.wine_name) document.getElementById("input-wine-name").value = data.label.wine_name;
-        if (data.label.vintage) document.getElementById("input-vintage").value = data.label.vintage;
-        if (data.label.producer) document.getElementById("input-producer").value = data.label.producer;
-        if (data.label.grape) document.getElementById("input-grape").value = data.label.grape;
-        if (data.label.region) document.getElementById("input-region").value = data.label.region;
-        if (data.label.wine_type) document.getElementById("input-wine-type").value = data.label.wine_type;
-        if (data.label.abv) document.getElementById("input-abv").value = data.label.abv;
-      }
-
-      // 비비노 정보 갱신
-      if (data.vivino) {
-        updateVivinoUI(data.vivino);
-      }
-
-    } catch (err) {
-      console.error(err);
-      alert("라벨 분석 중 오류가 발생했습니다. 직접 입력해 주세요.");
-    } finally {
-      analyzingOverlay.classList.add("hidden");
-      if (window.lucide) lucide.createIcons();
+    // 폼 필드 자동 채우기
+    if (data.label) {
+      if (data.label.wine_name) document.getElementById("input-wine-name").value = data.label.wine_name;
+      if (data.label.vintage) document.getElementById("input-vintage").value = data.label.vintage;
+      if (data.label.producer) document.getElementById("input-producer").value = data.label.producer;
+      if (data.label.grape) document.getElementById("input-grape").value = data.label.grape;
+      if (data.label.region) document.getElementById("input-region").value = data.label.region;
+      if (data.label.wine_type) document.getElementById("input-wine-type").value = data.label.wine_type;
+      if (data.label.abv) document.getElementById("input-abv").value = data.label.abv;
     }
-  });
+
+    // 비비노 정보 갱신
+    if (data.vivino) {
+      updateVivinoUI(data.vivino);
+    }
+
+  } catch (err) {
+    console.error(err);
+    alert("라벨 분석 중 오류가 발생했습니다. 직접 입력해 주세요.");
+  } finally {
+    analyzingOverlay.classList.add("hidden");
+    if (window.lucide) lucide.createIcons();
+  }
 }
 
 // 비비노 UI 업데이트
@@ -273,7 +281,11 @@ async function saveWineLog() {
 // 폼 초기화
 function resetForm() {
   currentImageFilename = "";
-  document.getElementById("file-input").value = "";
+  const fAlbum = document.getElementById("file-input-album");
+  const fCamera = document.getElementById("file-input-camera");
+  if (fAlbum) fAlbum.value = "";
+  if (fCamera) fCamera.value = "";
+
   document.getElementById("upload-placeholder").classList.remove("hidden");
   document.getElementById("image-preview-container").classList.add("hidden");
   document.getElementById("image-preview").src = "";

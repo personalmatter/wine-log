@@ -6,7 +6,6 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# 구글 시트 헤더 목록
 SHEET_HEADERS = [
     "기록일시", "마신날짜", "와인명", "빈티지", "생산자",
     "품종", "지역", "와인종류", "도수", "비비노평점",
@@ -14,41 +13,59 @@ SHEET_HEADERS = [
     "페어링안주", "안주평점", "안주메모", "라벨사진링크"
 ]
 
-def get_sheets_client():
-    """구글 시트 인증 클라이언트 생성 (인증 파일 존재 시)"""
+def get_credentials(scopes):
+    """서비스 계정 JSON 문자열 또는 파일로부터 Credentials 생성"""
+    import json
+    from google.oauth2.service_account import Credentials
+
+    # 1. JSON 문자열 환경변수가 있는 경우 (Render/Cloud 배포용)
+    if settings.GOOGLE_SERVICE_ACCOUNT_JSON:
+        try:
+            info = json.loads(settings.GOOGLE_SERVICE_ACCOUNT_JSON)
+            return Credentials.from_service_account_info(info, scopes=scopes)
+        except Exception as e:
+            logger.error(f"GOOGLE_SERVICE_ACCOUNT_JSON 파싱 실패: {e}")
+
+    # 2. 로컬 파일 경로가 있는 경우
     sa_file = settings.GOOGLE_SERVICE_ACCOUNT_FILE
-    if not sa_file or not os.path.exists(sa_file):
+    if sa_file and os.path.exists(sa_file):
+        try:
+            return Credentials.from_service_account_file(sa_file, scopes=scopes)
+        except Exception as e:
+            logger.error(f"GOOGLE_SERVICE_ACCOUNT_FILE 읽기 실패: {e}")
+
+    return None
+
+def get_sheets_client():
+    """구글 시트 인증 클라이언트 생성"""
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    creds = get_credentials(scopes)
+    if not creds:
         return None
     try:
         import gspread
-        from google.oauth2.service_account import Credentials
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        creds = Credentials.from_service_account_file(sa_file, scopes=scopes)
-        client = gspread.authorize(creds)
-        return client
+        return gspread.authorize(creds)
     except Exception as e:
         logger.error(f"구글 시트 인증 실패: {e}")
         return None
 
 def upload_image_to_drive(image_path: Path) -> Optional[str]:
     """구글 드라이브 폴더에 이미지 업로드 후 공유 링크 반환"""
-    sa_file = settings.GOOGLE_SERVICE_ACCOUNT_FILE
     folder_id = settings.GOOGLE_DRIVE_FOLDER_ID
-    if not sa_file or not os.path.exists(sa_file) or not folder_id:
+    if not folder_id:
+        return None
+
+    scopes = ["https://www.googleapis.com/auth/drive"]
+    creds = get_credentials(scopes)
+    if not creds:
         return None
 
     try:
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaFileUpload
-        from google.oauth2.service_account import Credentials
-
-        creds = Credentials.from_service_account_file(
-            sa_file,
-            scopes=["https://www.googleapis.com/auth/drive"]
-        )
         drive_service = build("drive", "v3", credentials=creds)
 
         file_metadata = {
@@ -62,7 +79,6 @@ def upload_image_to_drive(image_path: Path) -> Optional[str]:
             fields="id, webViewLink"
         ).execute()
 
-        # 읽기 권한 추가 (누구나 링크로 보기)
         permission = {"type": "anyone", "role": "reader"}
         drive_service.permissions().create(fileId=file.get("id"), body=permission).execute()
 
@@ -79,23 +95,19 @@ def append_wine_to_sheet(entry: Dict[str, Any], image_link: str = "") -> bool:
         return False
 
     try:
-        # 스프레드시트 열기
         sheet_name = settings.GOOGLE_SHEET_NAME
         try:
             spreadsheet = client.open(sheet_name)
         except Exception:
-            # 시트가 없으면 새로 생성
             spreadsheet = client.create(sheet_name)
             logger.info(f"새 스프레드시트 생성: {sheet_name}")
 
         worksheet = spreadsheet.sheet1
 
-        # 헤더 확인 및 추가
         existing_values = worksheet.row_values(1)
         if not existing_values:
             worksheet.append_row(SHEET_HEADERS)
 
-        # 행 데이터 조립
         row = [
             entry.get("created_at", ""),
             entry.get("date", ""),
