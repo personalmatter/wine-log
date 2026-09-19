@@ -8,7 +8,7 @@ from app.models import WineLabelAnalysis
 
 logger = logging.getLogger(__name__)
 
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
 PROMPT = """
 이 사진은 와인 병 또는 와인 라벨입니다.
