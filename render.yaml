@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: wine-log
+    env: docker
+    plan: free
+    region: singapore # 한국에서 가장 가까운 무료 리전
+    dockerfilePath: Dockerfile
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GOOGLE_SHEET_NAME
+        value: 와인 기록장

@@ -1,0 +1,22 @@
+# 환경 설정 및 가상환경
+.venv/
+.env
+*.env
+credentials.json
+*.json
+
+# 캐시 및 컴파일 파일
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# 업로드 파일 및 로컬 DB
+uploads/*
+!uploads/.gitkeep
+wine_log.db
+wine_log.db-journal
+
+# OS 파일
+.DS_Store
+Thumbs.db

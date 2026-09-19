@@ -1,0 +1,12 @@
+.venv
+.git
+.gitignore
+.env
+wine_log.db
+wine_log.db-journal
+uploads/*
+!uploads/.gitkeep
+__pycache__
+*.pyc
+.DS_Store
+tests
