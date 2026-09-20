@@ -123,8 +123,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     console.error("DB init failed:", err);
   }
 
-  // 모달 키 세팅 & 배너 상태 점검
+  // 모달 키 세팅 & 배너/시트 상태 점검
   checkApiKeyStatus();
+  checkSheetStatus();
 
   if (window.lucide) lucide.createIcons();
 });
@@ -150,17 +151,87 @@ function checkApiKeyStatus() {
   }
 }
 
+// 구글 시트 연동 관리
+function getGoogleSheetUrl() {
+  return localStorage.getItem("google_sheet_url") || "";
+}
+
+function checkSheetStatus() {
+  const sheetUrl = getGoogleSheetUrl();
+  const inputEl = document.getElementById("modal-sheet-url");
+  const badgeEl = document.getElementById("sheet-conn-badge");
+  const openSheetBtn = document.getElementById("btn-open-sheet");
+
+  if (inputEl) inputEl.value = sheetUrl;
+
+  if (badgeEl) {
+    if (sheetUrl) {
+      badgeEl.textContent = "연결됨 (동기화 활성)";
+      badgeEl.className = "text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/60 font-semibold";
+    } else {
+      badgeEl.textContent = "미연동";
+      badgeEl.className = "text-[10px] px-1.5 py-0.5 rounded bg-stone-800 text-stone-400";
+    }
+  }
+
+  if (openSheetBtn) {
+    if (sheetUrl) {
+      openSheetBtn.classList.remove("hidden");
+    } else {
+      openSheetBtn.classList.add("hidden");
+    }
+  }
+}
+
+function toggleSheetGuide() {
+  const box = document.getElementById("sheet-guide-box");
+  const arrow = document.getElementById("guide-arrow");
+  if (!box) return;
+  box.classList.toggle("hidden");
+  if (arrow) {
+    arrow.classList.toggle("rotate-180");
+  }
+}
+
+function copySheetScript() {
+  const scriptText = `function doPost(e) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var d = JSON.parse(e.postData.contents);
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(["기록일시","마신날짜","와인명","빈티지","생산자","품종","지역","종류","도수","비비노평점","비비노리뷰수","비비노링크","내평점","가격","코멘트","안주","안주평점","안주메모"]);
+  }
+  sheet.appendRow([d.created_at, d.date, d.wine_name, d.vintage, d.producer, d.grape, d.region, d.wine_type, d.abv, d.vivino_rating, d.vivino_ratings_count, d.vivino_url, d.my_rating, d.price, d.my_notes, d.food, d.food_rating, d.food_notes]);
+  return ContentService.createTextOutput(JSON.stringify({result:"ok"})).setMimeType(ContentService.MimeType.JSON);
+}`;
+  navigator.clipboard.writeText(scriptText).then(() => {
+    alert("구글 Apps Script 코드가 클립보드에 복사되었습니다!\n구글 시트의 [확장 프로그램] -> [Apps Script]에 붙여넣으세요.");
+  }).catch(() => {
+    alert("코드 복사에 실패했습니다. 수동으로 복사해 주세요.");
+  });
+}
+
 function saveApiKeySetting() {
-  const input = document.getElementById("modal-gemini-key");
-  const val = input.value.trim();
-  if (val) {
-    localStorage.setItem("gemini_api_key", val);
-    alert("Gemini API 키가 안전하게 저장되었습니다.");
+  // 1. Gemini Key 저장
+  const inputKey = document.getElementById("modal-gemini-key");
+  const keyVal = inputKey ? inputKey.value.trim() : "";
+  if (keyVal) {
+    localStorage.setItem("gemini_api_key", keyVal);
   } else {
     localStorage.removeItem("gemini_api_key");
-    alert("API 키가 삭제되었습니다.");
   }
+
+  // 2. 구글 시트 Web App URL 저장
+  const inputSheet = document.getElementById("modal-sheet-url");
+  const sheetVal = inputSheet ? inputSheet.value.trim() : "";
+  if (sheetVal) {
+    localStorage.setItem("google_sheet_url", sheetVal);
+  } else {
+    localStorage.removeItem("google_sheet_url");
+  }
+
+  alert("설정이 성공적으로 저장되었습니다.");
   checkApiKeyStatus();
+  checkSheetStatus();
   closeSettingsModal();
 }
 
@@ -512,8 +583,30 @@ async function searchVivinoManually() {
   }
 }
 
+// 구글 시트 웹앱으로 와인 데이터 1행 전송
+async function sendToGoogleSheet(entry) {
+  const sheetUrl = getGoogleSheetUrl();
+  if (!sheetUrl) return false;
+
+  try {
+    // text/plain 및 no-cors 모드로 전송하여 브라우저 CORS 문제 원천 방지
+    await fetch(sheetUrl, {
+      method: "POST",
+      mode: "no-cors",
+      headers: {
+        "Content-Type": "text/plain;charset=utf-8"
+      },
+      body: JSON.stringify(entry)
+    });
+    return true;
+  } catch (err) {
+    console.warn("구글 시트 전송 중 오류 (로컬 DB에는 저장됨):", err);
+    return false;
+  }
+}
+
 // ==========================================
-// 6. 와인 기록 저장 (IndexedDB 영구 보존)
+// 6. 와인 기록 저장 (IndexedDB 영구 보존 & 구글 시트 동기화)
 // ==========================================
 async function saveWineRecord() {
   const wineName = document.getElementById("input-wine-name").value.trim();
@@ -529,7 +622,7 @@ async function saveWineRecord() {
 
   const now = new Date();
   const wineEntry = {
-    created_at: now.toISOString(),
+    created_at: now.toLocaleString("ko-KR"),
     date: document.getElementById("input-date").value,
     wine_name: wineName,
     vintage: document.getElementById("input-vintage").value.trim(),
@@ -551,8 +644,21 @@ async function saveWineRecord() {
   };
 
   try {
+    // 1. 아이폰 내부 IndexedDB에 영구 저장 (절대 리셋 안 됨)
     await wineDB.addWine(wineEntry);
-    alert("🎉 와인 기록이 내 아이폰에 안전하게 영구 저장되었습니다!");
+
+    // 2. 구글 시트 연동 URL이 설정되어 있으면 구글 시트에도 동시 전송
+    const sheetUrl = getGoogleSheetUrl();
+    if (sheetUrl) {
+      btnSave.innerHTML = `<span class="animate-spin">📊</span> 구글 시트 동기화 중...`;
+      await sendToGoogleSheet(wineEntry);
+    }
+
+    let alertMsg = "🎉 와인 기록이 내 아이폰에 안전하게 영구 저장되었습니다!";
+    if (sheetUrl) {
+      alertMsg += "\n📊 구글 시트에도 실시간 동기화되었습니다.";
+    }
+    alert(alertMsg);
 
     resetForm();
     await loadWinesFromDB();
